@@ -84,14 +84,25 @@ jobs:
         with:
           lfs: true
           fetch-depth: 0
-
       - name: Configure Git LFS
         run: |
           git lfs install
-          git lfs pull
-          # Configure LFS to track only mainnet files
+
+          # Remove from regular git if needed
+          git rm --cached "data/*_mainnet.json" || true
+
+          # Set up tracking
           git lfs track "data/*_mainnet.json"
-          echo "Current LFS storage before deployment (mainnet files only):"
+          git add .gitattributes
+
+          # Add to LFS
+          git add "data/*_mainnet.json"
+
+          # Check LFS status
+          echo "Files tracked by LFS:"
+          git lfs ls-files
+
+          echo "LFS storage usage:"
           git lfs ls-files -l | grep "_mainnet.json" | awk '{total += $4} END {print total/1024/1024 " MB"}'
 
       - name: Download snapshot
