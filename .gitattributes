@@ -1,2 +1,0 @@
-data/*_mainnet.json filter=lfs diff=lfs merge=lfs -text
-data/*_mainnet.json !text !filter !merge !diff
