@@ -1,0 +1,74 @@
+name: "Clean LFS Storage"
+on:
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  clean-lfs:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Check Initial LFS Storage
+        run: |
+          git lfs install
+          echo "Initial LFS storage usage:"
+          git lfs ls-files -l | awk '{total += $4} END {print total/1024/1024 " MB"}'
+
+      - name: Clean LFS
+        run: |
+          # Configure git
+          git config --global user.email "dygons14@gmail.com"
+          git config --global user.name "sniezka"
+
+          # List all LFS files before cleaning
+          echo "Current LFS files:"
+          git lfs ls-files
+
+          # Remove LFS tracking
+          git lfs untrack "data/*_mainnet.json"
+
+          # Remove old LFS objects
+          git lfs prune
+
+          # Clean up any unreferenced LFS files
+          git gc
+          git lfs prune --force
+
+          # Remove files from Git history
+          git filter-branch --force --index-filter \
+            'git rm --cached --ignore-unmatch data/*_mainnet.json' \
+            --prune-empty --tag-name-filter cat -- --all
+
+          # Force garbage collection
+          git reflog expire --expire=now --all
+          git gc --prune=now --aggressive
+
+      - name: Reinitialize LFS
+        run: |
+          # Setup fresh LFS tracking
+          git lfs install
+          git lfs track "data/*_mainnet.json"
+          git add .gitattributes
+
+          # Commit changes
+          git commit -m "Reset LFS tracking" || echo "No changes to commit"
+
+      - name: Force Push Changes
+        run: |
+          echo "Pushing cleaned repository..."
+          git push origin master --force
+          git push origin --force --all
+
+          # Push tags
+          git push origin --force --tags
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
+
+      - name: Check Final LFS Storage
+        run: |
+          echo "Final LFS storage usage:"
+          git lfs ls-files -l | awk '{total += $4} END {print total/1024/1024 " MB"}'
