@@ -1,80 +1,65 @@
-name: "Clean LFS Storage"
+name: "Cleanup Git LFS Storage"
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Manual trigger only for safety
 
 jobs:
-  clean-lfs:
+  cleanup-lfs:
     runs-on: ubuntu-latest
     permissions: write-all
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout repository
+        uses: actions/checkout@v2
         with:
           lfs: true
           fetch-depth: 0
 
-      - name: Install git-filter-repo
+      - name: Configure Git
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git-filter-repo
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
 
-      - name: Check Initial LFS Storage
+      - name: Install Git LFS
         run: |
           git lfs install
-          echo "Initial LFS storage usage:"
-          git lfs ls-files -l | awk '{total += $4} END {print total/1024/1024 " MB"}'
 
-      - name: Clean LFS
+      - name: Remove LFS tracking and objects
         run: |
-          # Configure git
-          git config --global user.email "dygons14@gmail.com"
-          git config --global user.name "sniezka"
-
-          # Stash any unstaged changes
-          git stash push --include-untracked || true
-
-          # List all LFS files before cleaning
-          echo "Current LFS files:"
+          # Identify LFS tracked files
+          echo "Currently tracked LFS files:"
           git lfs ls-files
 
-          # Remove LFS tracking
-          git lfs untrack "data/*_mainnet.json"
-          git add .gitattributes
-          git commit -m "Remove LFS tracking" || true
+          # Remove LFS tracking from .gitattributes
+          rm -f .gitattributes
 
-          # Remove old LFS objects
-          git lfs prune
-          git gc
-          git lfs prune --force
+          # Uninstall LFS from repo
+          git lfs uninstall
 
-          # Use git filter-repo to remove files from history
-          git filter-repo --force --invert-paths --path "data/*_mainnet.json"
+          # Remove all LFS pointers and replace with actual files
+          git lfs migrate export --everything
 
-          # Force garbage collection
-          git reflog expire --expire=now --all
-          git gc --prune=now --aggressive
+          # Clean up LFS cache
+          rm -rf .git/lfs
 
-          # Re-apply stashed changes if any
-          git stash pop || true
+          # Remove any remaining LFS configs
+          git config --unset-all filter.lfs.required
+          git config --unset-all filter.lfs.clean
+          git config --unset-all filter.lfs.smudge
+          git config --unset-all filter.lfs.process
 
-      - name: Reinitialize LFS
+      - name: Commit changes
         run: |
-          git lfs install
-          git lfs track "data/*_mainnet.json"
-          git add .gitattributes
-          git commit -m "Reset LFS tracking" || echo "No changes to commit"
+          # Stage all changes
+          git add -A
 
-      - name: Force Push Changes
-        run: |
-          # Re-add the origin remote
-          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/Sniezka1927/git-lfs.git"
+          # Create commit
+          git commit -m "Remove Git LFS tracking and objects" || echo "No changes to commit"
 
-          # Push all changes forcefully
-          git push origin master --force
-          git push origin --force --all
+          # Force push to remove LFS history
+          git push origin HEAD --force
         env:
           GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
 
-      - name: Check Final LFS Storage
+      - name: Verify cleanup
         run: |
-          echo "Final LFS storage usage:"
-          git lfs ls-files -l | awk '{total += $4} END {print total/1024/1024 " MB"}'
+          echo "Checking for any remaining LFS files:"
+          git lfs ls-files || echo "No LFS files found - cleanup successful"
