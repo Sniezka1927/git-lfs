@@ -22,37 +22,51 @@ jobs:
         run: |
           git lfs install
 
+      - name: Clean working directory
+        run: |
+          # Reset any changes in the working directory
+          git reset --hard HEAD
+          git clean -fd
+
       - name: Remove LFS tracking and objects
         run: |
-          # Identify LFS tracked files
+          # Show current LFS files
           echo "Currently tracked LFS files:"
           git lfs ls-files
 
-          # Remove LFS tracking from .gitattributes
+          # Store LFS patterns before removing .gitattributes
+          LFS_PATTERNS=$(git lfs track | grep -v "Listing tracked patterns" || echo "*.json")
+          echo "LFS patterns: $LFS_PATTERNS"
+
+          # Remove LFS tracking
+          git lfs untrack "data/*_mainnet.json"
+
+          # Migrate LFS objects to regular files
+          git lfs migrate export --include="data/*_mainnet.json" --everything
+
+          # Remove .gitattributes
           rm -f .gitattributes
 
-          # Uninstall LFS from repo
-          git lfs uninstall
-
-          # Remove all LFS pointers and replace with actual files
-          git lfs migrate export --everything
-
-          # Clean up LFS cache
+          # Clean up LFS cache and configs
           rm -rf .git/lfs
+          git config --unset-all filter.lfs.required || true
+          git config --unset-all filter.lfs.clean || true
+          git config --unset-all filter.lfs.smudge || true
+          git config --unset-all filter.lfs.process || true
 
-          # Remove any remaining LFS configs
-          git config --unset-all filter.lfs.required
-          git config --unset-all filter.lfs.clean
-          git config --unset-all filter.lfs.smudge
-          git config --unset-all filter.lfs.process
+          # Remove any remaining LFS configs from git config
+          git config --local --unset-all filter.lfs.required || true
+          git config --local --unset-all filter.lfs.clean || true
+          git config --local --unset-all filter.lfs.smudge || true
+          git config --local --unset-all filter.lfs.process || true
 
-      - name: Commit changes
+      - name: Stage and commit changes
         run: |
-          # Stage all changes
-          git add -A
+          # Stage all changes including untracked files
+          git add -A .
 
-          # Create commit
-          git commit -m "Remove Git LFS tracking and objects" || echo "No changes to commit"
+          # Commit changes
+          git commit -m "Remove Git LFS tracking and convert LFS objects to regular files" || echo "No changes to commit"
 
           # Force push to remove LFS history
           git push origin HEAD --force
@@ -63,3 +77,6 @@ jobs:
         run: |
           echo "Checking for any remaining LFS files:"
           git lfs ls-files || echo "No LFS files found - cleanup successful"
+
+          echo "Checking for remaining LFS configurations:"
+          git config --list | grep lfs || echo "No LFS configs found"

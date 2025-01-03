@@ -1,75 +1,162 @@
-name: "Cleanup Git LFS Storage"
+name: "Create snapshot of points"
 on:
-  workflow_dispatch: # Manual trigger only for safety
+  # schedule:
+  #   - cron: "*/5 * * * *" # every 5 minutes
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+env:
+  solana_version: 1.18.18
 
 jobs:
-  cleanup-lfs:
+  points-snap:
     runs-on: ubuntu-latest
-    permissions: write-all
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v2
         with:
           lfs: true
           fetch-depth: 0
 
-      - name: Configure Git
+      - name: Check Initial LFS Storage
         run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "actions@github.com"
+          git lfs install
+          echo "Initial LFS storage usage (mainnet files only):"
+          git lfs ls-files -l | grep "_mainnet.json" | awk '{total += $4} END {print total/1024/1024 " MB"}'
 
-      - name: Install Git LFS
+      - uses: actions/setup-node@v2
+        with:
+          node-version: "16"
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+
+      - name: install global mocha
+        run: |
+          export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
+          npm install -g mocha
+          npm install -g ts-mocha
+          npm install -g typescript
+          npm install -g @project-serum/anchor
+          ts-mocha -h
+
+      - name: install essential
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config build-essential libudev-dev
+
+      - name: install solana
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.solana_version }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
+          solana --version
+
+      - name: setup solana
+        run: |
+          export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
+          solana --version
+          solana-keygen new -o "$HOME/.config/solana/id.json" --no-passphrase --silent
+
+      - name: snapshot
+        run: |
+          export PATH="/home/runner/.local/share/solana/install/active_release/bin:$PATH"
+          export ANCHOR_WALLET="/home/runner/.config/solana/id.json"
+          npm install
+          npm run snap
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eclipse-points-snapshot-${{ github.run_id }}
+          path: |
+            ./data/*.json
+
+  deploy:
+    needs: [points-snap]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions: write-all
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          lfs: true
+          fetch-depth: 0
+      - name: Configure Git LFS
         run: |
           git lfs install
 
-      - name: Clean working directory
-        run: |
-          # Reset any changes in the working directory
-          git reset --hard HEAD
+          # Remove from regular git if needed
+          git rm --cached "data/*_mainnet.json" || true
 
-          # Clean untracked files
-          git clean -fd
+          # Set up tracking
+          git lfs track "data/*_mainnet.json"
+          git add .gitattributes
 
-      - name: Remove LFS tracking and objects
-        run: |
-          # Show current LFS files
-          echo "Currently tracked LFS files:"
+          # Add to LFS
+          git add "data/*_mainnet.json"
+
+          # Check LFS status
+          echo "Files tracked by LFS:"
           git lfs ls-files
 
-          # Commit any pending changes to avoid dirty working directory
-          git add -A
-          git commit -m "Commit pending changes before LFS cleanup" || echo "No changes to commit"
+          echo "LFS storage usage:"
+          git lfs ls-files -l | grep "_mainnet.json" | awk '{total += $4} END {print total/1024/1024 " MB"}'
 
-          # Remove LFS tracking from .gitattributes
-          rm -f .gitattributes
+      - name: Download snapshot
+        uses: actions/download-artifact@v4
+        with:
+          name: eclipse-points-snapshot-${{ github.run_id }}
+          path: ./data/
+        continue-on-error: true
 
-          # Uninstall LFS
-          git lfs uninstall
-
-          # Force migrate LFS objects to regular files
-          git lfs migrate export --yes --everything
-
-          # Clean up LFS cache and configs
-          rm -rf .git/lfs
-          git config --unset-all filter.lfs.required || true
-          git config --unset-all filter.lfs.clean || true
-          git config --unset-all filter.lfs.smudge || true
-          git config --unset-all filter.lfs.process || true
-
-      - name: Commit changes
+      - name: Clean old mainnet snapshots
         run: |
-          # Stage all changes
-          git add -A
+          cd ./data
+          # Keep only the very latest snapshot for each prefix
+          for prefix in $(ls *_mainnet.json 2>/dev/null | sed 's/_mainnet.json//' | sort -u); do
+            ls -t ${prefix}_mainnet.json | tail -n +2 | xargs rm -f 2>/dev/null || true
+          done
+          cd ..
 
-          # Create commit
-          git commit -m "Remove Git LFS tracking and objects" || echo "No changes to commit"
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.email "dygons14@gmail.com"
+          git config --global user.name "sniezka"
 
-          # Force push to remove LFS history
-          git push origin HEAD --force
+          # Check size before pushing
+          echo "Checking file sizes..."
+          ls -lh ./data/*_mainnet.json || true
+
+          # Initialize LFS for this repo
+          git lfs install
+
+          # Track only new files
+          git add .gitattributes
+          git add ./data/
+
+          # Commit with size info
+          git commit -m "Snapshot of points - $(date +%Y%m%d)"
+
+          # Push in smaller chunks
+          echo "Pushing changes..."
+          git push origin master || {
+            echo "Push failed, trying without LFS..."
+            git lfs untrack "data/*_mainnet.json"
+            git add .gitattributes
+            git commit --amend --no-edit
+            git push origin master --force
+          }
         env:
           GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
 
-      - name: Verify cleanup
+      - name: Check Final LFS Storage
         run: |
-          echo "Checking for any remaining LFS files:"
-          git lfs ls-files || echo "No LFS files found - cleanup successful"
+          echo "Final LFS storage usage after deployment (mainnet files only):"
+          git lfs ls-files -l | grep "_mainnet.json" | awk '{total += $4} END {print total/1024/1024 " MB"}'
+
+      - uses: actions/setup-node@v2
+        with:
+          node-version: "16"
