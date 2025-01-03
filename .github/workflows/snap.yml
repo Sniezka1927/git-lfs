@@ -112,8 +112,8 @@ jobs:
 
       - name: Commit and Push Changes
         run: |
-          git config --global user.email stats@invariant.app
-          git config --global user.name invariantStats
+          git config --global user.email dygons14@gmail.com
+          git config --global user.name Sniezka1927
 
           # Ensure only mainnet files are tracked by LFS
           git lfs track "data/*_mainnet.json"
@@ -130,7 +130,7 @@ jobs:
           # Then push the regular files
           git push origin master --force
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
 
       - name: Check Final LFS Storage
         run: |
