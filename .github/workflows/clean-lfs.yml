@@ -65,6 +65,10 @@ jobs:
 
       - name: Force Push Changes
         run: |
+          # Re-add the origin remote
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/Sniezka1927/git-lfs.git"
+
+          # Push all changes forcefully
           git push origin master --force
           git push origin --force --all
         env:
