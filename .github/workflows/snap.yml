@@ -103,32 +103,41 @@ jobs:
 
       - name: Clean old mainnet snapshots
         run: |
-          # Remove all mainnet JSON files except the most recent ones
           cd ./data
-          for prefix in $(ls *_mainnet.json | sed 's/_mainnet.json//' | sort -u); do
-            ls -t ${prefix}_mainnet.json | tail -n +2 | xargs rm -f
+          # Keep only the very latest snapshot for each prefix
+          for prefix in $(ls *_mainnet.json 2>/dev/null | sed 's/_mainnet.json//' | sort -u); do
+            ls -t ${prefix}_mainnet.json | tail -n +2 | xargs rm -f 2>/dev/null || true
           done
           cd ..
 
       - name: Commit and Push Changes
         run: |
-          git config --global user.email dygons14@gmail.com
-          git config --global user.name Sniezka1927
+          git config --global user.email "dygons14@gmail.com"
+          git config --global user.name "sniezka"
 
-          # Ensure only mainnet files are tracked by LFS
-          git lfs track "data/*_mainnet.json"
+          # Check size before pushing
+          echo "Checking file sizes..."
+          ls -lh ./data/*_mainnet.json || true
+
+          # Initialize LFS for this repo
+          git lfs install
+
+          # Track only new files
           git add .gitattributes
-
-          # Add all files (LFS will handle mainnet files automatically)
           git add ./data/
 
-          git commit -m "Snapshot of points done!"
+          # Commit with size info
+          git commit -m "Snapshot of points - $(date +%Y%m%d)"
 
-          # Push LFS objects first
-          git lfs push origin master --all
-
-          # Then push the regular files
-          git push origin master --force
+          # Push in smaller chunks
+          echo "Pushing changes..."
+          git push origin master || {
+            echo "Push failed, trying without LFS..."
+            git lfs untrack "data/*_mainnet.json"
+            git add .gitattributes
+            git commit --amend --no-edit
+            git push origin master --force
+          }
         env:
           GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
 
