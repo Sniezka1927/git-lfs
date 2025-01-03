@@ -42,7 +42,7 @@ jobs:
           git lfs untrack "data/*_mainnet.json"
 
           # Migrate LFS objects to regular files
-          git lfs migrate export --include="data/*_mainnet.json" --everything
+          git lfs migrate export --include="data/*_mainnet.json" --everything --yes
 
           # Remove .gitattributes
           rm -f .gitattributes
